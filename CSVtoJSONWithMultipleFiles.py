@@ -9,6 +9,11 @@ class CSVtoJSONWithMultipleFiles:
     DATE_FORMAT = "%m/%d/%Y"
     CSV_FOLDER = "csv"
     OUTPUT_JSON_FILE = "filtered data.json"
+    REQUIRED_COLUMNS = [
+        "LICENSE TYPE", "LICENSE NUMBER", "LICENSE EXPIRATION DATE",
+        "COUNTY", "NAME", "MAILING ADDRESS LINE1", "MAILING ADDRESS LINE2",
+        "MAILING ADDRESS CITY, STATE ZIP", "PHONE NUMBER"
+    ]
 
     def __init__(self):
         self._inputCSVPaths = self.get_csv_files_from_folder(self.CSV_FOLDER)
@@ -56,28 +61,44 @@ class CSVtoJSONWithMultipleFiles:
             str or None: (The stripped string if it contains non-whitespace characters; 
                         otherwise, None).
         """
+        return inputValue.strip() if inputValue and inputValue.strip() else None
 
-        if isinstance(inputValue, tuple):
-            inputValue = " ".join(map(str, inputValue))
-        if isinstance(inputValue, str):
-            return inputValue.strip() if inputValue.strip() else None
-        return None
-
-    def get_csv_files_from_folder(self, folder_path):
+    def get_csv_files_from_folder(self, folderPath):
         """
         Returns a list of all CSV files in the specified folder.
         """
-        csv_files = []
-        if os.path.exists(folder_path) and os.path.isdir(folder_path):
-            for file_name in os.listdir(folder_path):
-                file_path = os.path.join(folder_path, file_name)
-                if file_name.lower().endswith('.csv') and os.path.isfile(file_path):
-                    csv_files.append(file_path)
+        csvFiles = []
+        if os.path.exists(folderPath) and os.path.isdir(folderPath):
+            for fileName in os.listdir(folderPath):
+                filePath = os.path.join(folderPath, fileName)
+                if fileName.lower().endswith('.csv') and os.path.isfile(filePath):
+                    csvFiles.append(filePath)
+
+                if not csvFiles:
+                    print(f"Warning: No CSV file found in '{folderPath}'.")
         else:
             print(
-                f"Warning: The folder {folder_path} does not exist or is not a directory.")
+                f"Warning: The folder {folderPath} does not exist or is not a directory."
+            )
 
-        return csv_files
+        return csvFiles
+
+    def check_for_required_columns(self, csvColumns, CsvFileName):
+        """
+        Checks if all required columns are present in the CSV data.
+        Returns True if all required columns are found, False otherwise.
+        """
+        missingColumns = [
+            col for col in self.REQUIRED_COLUMNS if col not in csvColumns
+        ]
+
+        if missingColumns:
+            print(
+                f"Warning: Missing requiredcolumns {', '.join(missingColumns)} in '{CsvFileName}':"
+            )
+            return False
+
+        return True
 
     def get_json_from_csv(self):
         """
@@ -98,10 +119,14 @@ class CSVtoJSONWithMultipleFiles:
             with open(csv_file, newline='', encoding='utf-8') as csvFile:
                 rowDict = csv.DictReader(csvFile)
 
+                if not self.check_for_required_columns(rowDict.fieldnames, csv_file):
+                    continue
+
                 for row in rowDict:
 
                     expirationDateTrimmed = row.get(
-                        "LICENSE EXPIRATION DATE", "")
+                        "LICENSE EXPIRATION DATE", ""
+                    )
 
                     try:
                         expirationDate = datetime.strptime(
