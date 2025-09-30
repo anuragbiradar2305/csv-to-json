@@ -1,7 +1,14 @@
+# inbuilt module
 import csv
 import json
 from datetime import datetime
-import os
+import logging
+
+# custom module
+from utility import CSVUtility
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 class CSVtoJSONWithMultipleFiles:
@@ -16,7 +23,10 @@ class CSVtoJSONWithMultipleFiles:
     ]
 
     def __init__(self):
-        self._inputCSVPaths = self.get_csv_files_from_folder(self.CSV_FOLDER)
+        self._inputCSVPaths = CSVUtility.get_csv_files_from_folder(
+            self.CSV_FOLDER
+        )
+
         self._outputJSONPath = self.OUTPUT_JSON_FILE
 
     @property
@@ -29,93 +39,82 @@ class CSVtoJSONWithMultipleFiles:
         """Returns today's date."""
         return datetime.today()
 
-    @staticmethod
-    def get_first_last_full_name(inputName):
-        """
-        Parses a name string in the format 'LastName, FirstName'
-        and returns:
-            - FullName (title case)
-            - FirstName (title case)
-            - LastName (title case)
-
-        Returns (None, None, None) if the input(name) is invalid.
-        """
-        if not inputName or ',' not in inputName:
-            return None, None, None
-
-        lastName, firstName = [part.strip()
-                               for part in inputName.split(',', 1)]
-        fullName = f"{firstName} {lastName}".title()
-
-        return fullName, firstName.title(), lastName.title()
-
-    @staticmethod
-    def replace_empty_with_null(inputValue):
-        """
-        Replaces empty or whitespace with None.
-
-        Parameters:
-            value (str or None).
-
-        Returns:
-            str or None: (The stripped string if it contains non-whitespace characters; 
-                        otherwise, None).
-        """
-        return inputValue.strip() if inputValue and inputValue.strip() else None
-
-    def get_csv_files_from_folder(self, folderPath):
-        """
-        Returns a list of all CSV files in the specified folder.
-        """
-        csvFiles = []
-        if os.path.exists(folderPath) and os.path.isdir(folderPath):
-            for fileName in os.listdir(folderPath):
-                filePath = os.path.join(folderPath, fileName)
-                if fileName.lower().endswith('.csv') and os.path.isfile(filePath):
-                    csvFiles.append(filePath)
-
-                if not csvFiles:
-                    print(f"Warning: No CSV file found in '{folderPath}'.")
-        else:
-            print(
-                f"Warning: The folder {folderPath} does not exist or is not a directory."
-            )
-
-        return csvFiles
-
     def check_for_required_columns(self, csvColumns, CsvFileName):
         """
         Checks if all required columns are present in the CSV data.
         Returns True if all required columns are found, False otherwise.
         """
-        missingColumns = [
-            col for col in self.REQUIRED_COLUMNS if col not in csvColumns
-        ]
+        missingColumns = CSVUtility.check_for_required_columns(
+            csvColumns, self.REQUIRED_COLUMNS
+        )
 
         if missingColumns:
             print(
-                f"Warning: Missing requiredcolumns {', '.join(missingColumns)} in '{CsvFileName}':"
+                f"Warning: Missing required columns {', '.join(missingColumns)} in '{CsvFileName}' "
             )
             return False
 
         return True
 
+    def parse_csv_row(self, row):
+        """
+        Processes a single row and returns a dictionary for JSON output
+        """
+
+        expirationDateTrimmed = row.get("LICENSE EXPIRATION DATE", "")
+
+        expirationDate = CSVUtility.parse_date(
+            expirationDateTrimmed,
+            self.DATE_FORMAT
+        )
+
+        # Skip expired or invalid rows
+        if expirationDate is None or expirationDate <= self.todaysDate:
+            return None
+
+        # Process other fields using utility functions
+        licenseType = CSVUtility.replace_empty_with_null(
+            row.get("LICENSE TYPE")
+        )
+
+        licenseNumber = CSVUtility.replace_empty_with_null(
+            row.get("LICENSE NUMBER")
+        )
+
+        licenseId = f"{licenseType}-{licenseNumber}" if licenseType and licenseNumber else None
+
+        county = CSVUtility.replace_empty_with_null(row.get("COUNTY"))
+        countyName = None if county and county.upper() == "OUT OF STATE" else county
+
+        fullName, firstName, lastName = CSVUtility.get_first_last_full_name(
+            row.get("NAME")
+        )
+
+        jsonFieldsForJsonFile = {
+            "Id": licenseId,
+            "License Type": licenseType,
+            "License Number": licenseNumber,
+            "License Expiration Date": expirationDateTrimmed,
+            "County": countyName,
+            "Full Name": fullName,
+            "First Name": firstName,
+            "Last Name": lastName,
+            "Mailing Address Line1": CSVUtility.replace_empty_with_null(row.get("MAILING ADDRESS LINE1")),
+            "Mailing Address Line2": CSVUtility.replace_empty_with_null(row.get("MAILING ADDRESS LINE2")),
+            "Mailing Address City, State Zip": CSVUtility.replace_empty_with_null(row.get("MAILING ADDRESS CITY, STATE ZIP")),
+            "Phone Number": CSVUtility.replace_empty_with_null(row.get("PHONE NUMBER")),
+        }
+
+        return jsonFieldsForJsonFile
+
     def get_json_from_csv(self):
         """
-        Reads multiple CSV files, filters and processes the data,
-        and writes the result to a JSON file.
-
-        This function performs the following steps:
-            - Skips records with missing or invalid LICENSE EXPIRATION DATE.
-            - Filters rows whose LICENSE EXPIRATION DATE is greater than today's date.
-            - Create license ID by joining LICENSE TYPE and LICENSE NUMBER.
-            - Gets full name, first name, and last name from the "NAME" field.
-            - Writes the filtered data to a JSON file.
+        Reads CSV file(s), processes the data, and writes the result to a JSON file.
         """
         jsonFileData = []
 
         for csv_file in self._inputCSVPaths:
-
+            logger.info(f"Processing file: {csv_file}")
             with open(csv_file, newline='', encoding='utf-8') as csvFile:
                 rowDict = csv.DictReader(csvFile)
 
@@ -123,53 +122,15 @@ class CSVtoJSONWithMultipleFiles:
                     continue
 
                 for row in rowDict:
+                    processedRow = self.parse_csv_row(row)
 
-                    expirationDateTrimmed = row.get(
-                        "LICENSE EXPIRATION DATE", ""
-                    )
+                    if processedRow:
+                        jsonFileData.append(processedRow)
 
-                    try:
-                        expirationDate = datetime.strptime(
-                            expirationDateTrimmed.strip(), self.DATE_FORMAT)
-                    except ValueError:
-                        continue
-
-                    if expirationDate <= self.todaysDate:
-                        continue
-
-                    licenseType = self.replace_empty_with_null(
-                        row.get("LICENSE TYPE"))
-                    licenseNumber = self.replace_empty_with_null(
-                        row.get("LICENSE NUMBER"))
-
-                    licenseId = f"{licenseType}-{licenseNumber}" if licenseType and licenseNumber else None
-
-                    county = self.replace_empty_with_null(row.get("COUNTY"))
-                    countyName = None if county and county.upper() == "OUT OF STATE" else county
-
-                    fullName, firstName, lastName = self.get_first_last_full_name(
-                        row.get("NAME")
-                    )
-
-                    jsonFieldsForJsonFile = {
-                        "Id": licenseId,
-                        "License Type": licenseType,
-                        "License Number": licenseNumber,
-                        "License Expiration Date": expirationDateTrimmed,
-                        "County": countyName,
-                        "Full Name": fullName,
-                        "First Name": firstName,
-                        "Last Name": lastName,
-                        "Mailing Address Line1": self.replace_empty_with_null(row.get("MAILING ADDRESS LINE1")),
-                        "Mailing Address Line2": self.replace_empty_with_null(row.get("MAILING ADDRESS LINE2")),
-                        "Mailing Address City, State Zip": self.replace_empty_with_null(row.get("MAILING ADDRESS CITY, STATE ZIP")),
-                        "Phone Number": self.replace_empty_with_null(row.get("PHONE NUMBER")),
-                    }
-
-                    jsonFileData.append(jsonFieldsForJsonFile)
-
+        # Write the JSON data to the output file
         with open(self.outputJSONPath, 'w', encoding='utf-8') as jsonfile:
             json.dump(jsonFileData, jsonfile, indent=4)
+            logger.info(f"JSON data has been written to {self.outputJSONPath}")
 
 
 if __name__ == "__main__":

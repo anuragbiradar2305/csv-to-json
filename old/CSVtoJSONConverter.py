@@ -42,8 +42,11 @@ class CSVtoJSONConverter:
         if not inputName or ',' not in inputName:
             return None, None, None
 
-        lastName, firstName = [part.strip()
-                               for part in inputName.split(',', 1)]
+        lastName, firstName = [
+            part.strip()
+            for part in inputName.split(',', 1)
+        ]
+
         fullName = f"{firstName} {lastName}".title()
 
         return fullName, firstName.title(), lastName.title()
